@@ -12,8 +12,8 @@ For a new session named `ju/foo`:
 
 ```
 ~/source/repos/.worktrees/ju-foo/
-  KP-Cases/            (git worktree, branch ju/foo)
-  KP-Cases-BFF/        (git worktree, branch ju/foo)
+  react/               (git worktree, branch ju/foo)
+  typescript/          (git worktree, branch ju/foo)
   ...every repo...
   .crue-session-id     (UUID used by claude --resume)
   .claude/

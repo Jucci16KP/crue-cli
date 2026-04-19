@@ -59,12 +59,26 @@ attach_or_switch() {
 }
 
 # --- build_session: create tmux windows for a workspace ---------------------
-# Args: session_name, workdir, claude_cmd
+# Args: session_name, workdir, claude_cmd, nvim_uuid (optional), nvim_mode (save|restore)
 build_session() {
-  local session="$1" workdir="$2" claude_cmd="$3"
+  local session="$1" workdir="$2" claude_cmd="$3" nvim_uuid="${4:-}" nvim_mode="${5:-save}"
+
+  # Legacy crue sessions won't have an nvim session file yet — fall back to
+  # save-mode so we create one from this point forward.
+  if [[ -n "$nvim_uuid" && "$nvim_mode" == "restore" ]]; then
+    if [[ ! -f "$HOME/.local/share/nvim/crue-sessions/${nvim_uuid}.vim" ]]; then
+      nvim_mode="save"
+    fi
+  fi
 
   tmux new-session -d -s "$session" -n "Neovim" -c "$workdir"
-  tmux send-keys -t "$session:Neovim" "nvim ." C-m
+  if [[ -n "$nvim_uuid" && "$nvim_mode" == "restore" ]]; then
+    tmux send-keys -t "$session:Neovim" "CRUE_SESSION_UUID=$nvim_uuid nvim '+SessionRestore $nvim_uuid'" C-m
+  elif [[ -n "$nvim_uuid" ]]; then
+    tmux send-keys -t "$session:Neovim" "CRUE_SESSION_UUID=$nvim_uuid nvim '+SessionSave $nvim_uuid' ." C-m
+  else
+    tmux send-keys -t "$session:Neovim" "nvim ." C-m
+  fi
 
   tmux new-window -t "$session" -n "Term" -c "$workdir"
 
@@ -113,10 +127,11 @@ print(json.loads(first).get("dir_name", ""))
     session_id=$(<"$workdir/.crue-session-id")
     claude_cmd="claude --resume $session_id"
   else
+    session_id=""
     claude_cmd="claude --continue"
   fi
 
-  build_session "$session" "$workdir" "$claude_cmd"
+  build_session "$session" "$workdir" "$claude_cmd" "$session_id" "restore"
   echo "crue: session '$session' ready at $workdir"
   attach_or_switch "$session"
   exit 0
@@ -298,7 +313,7 @@ else
   claude_cmd="claude --session-id $session_id --name $(printf %q "$dir_name")"
 fi
 
-build_session "$session" "$workdir" "$claude_cmd"
+build_session "$session" "$workdir" "$claude_cmd" "$session_id" "save"
 
 echo "crue: session '$session' ready at $workdir"
 

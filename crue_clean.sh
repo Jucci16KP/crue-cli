@@ -78,6 +78,12 @@ for s in "${selected[@]}"; do
     continue
   fi
 
+  # Capture the nvim session UUID before we start deleting things.
+  nvim_session_uuid=""
+  if [[ -f "$workspace/.crue-session-id" ]]; then
+    nvim_session_uuid=$(<"$workspace/.crue-session-id")
+  fi
+
   # Iterate real worktree subdirs (each has a .git file pointing at its main repo).
   for wt in "$workspace"/*; do
     [[ -d "$wt" ]] || continue
@@ -142,6 +148,14 @@ for s in "${selected[@]}"; do
   else
     rm -rf "$workspace"
     echo "  removed workspace $workspace"
+
+    if [[ -n "$nvim_session_uuid" ]]; then
+      nvim_session_file="$HOME/.local/share/nvim/crue-sessions/${nvim_session_uuid}.vim"
+      if [[ -f "$nvim_session_file" ]]; then
+        rm -f "$nvim_session_file"
+        echo "  removed nvim session $nvim_session_uuid"
+      fi
+    fi
   fi
 
   # Kill the tmux session last (may SIGHUP us if this is the current session)

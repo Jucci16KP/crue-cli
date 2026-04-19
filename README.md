@@ -31,6 +31,7 @@ And a tmux session `ju-foo` with four windows:
 
 ```bash
 git clone git@github.com:Jucci16KP/crue-cli.git ~/source/repos/crue-cli
+~/source/repos/crue-cli/install.sh   # WSL-only: copies notification sounds + merges Claude Code hooks
 ```
 
 Add to your `~/.zshrc` / `~/.bashrc`:
@@ -40,11 +41,39 @@ alias crue="~/source/repos/crue-cli/crue.sh"
 alias crue-clean="~/source/repos/crue-cli/crue_clean.sh"
 ```
 
+`install.sh` is idempotent — re-running is safe and will skip anything already in place. It only touches `~/sounds/` and `~/.claude/settings.json` (merged, never replaced). Skip it if you don't want the audio cues.
+
 ### Requirements
 
 - bash, git, tmux, python3 (stdlib only; needs curses)
 - `nvim` (the Neovim window hardcodes it — swap in `build_session()` if you use a different editor)
 - [Claude Code CLI](https://github.com/anthropics/claude-code) (`claude`) for the agent window
+- `jq` (only if running `install.sh`)
+
+## Neovim session integration (optional)
+
+`crue.sh` exports `CRUE_SESSION_UUID` and launches nvim with `+SessionSave <uuid>` (new) or `+SessionRestore <uuid>` (resume). To have nvim actually persist and restore your buffers/windows between crue sessions, add [auto-session](https://github.com/rmagatti/auto-session) to your config, gated on that env var so it only activates inside crue.
+
+lazy.nvim snippet:
+
+```lua
+{
+  "rmagatti/auto-session",
+  lazy = false,
+  cond = function()
+    return vim.env.CRUE_SESSION_UUID ~= nil
+  end,
+  opts = {
+    auto_session_root_dir = vim.fn.expand "~/.local/share/nvim/crue-sessions/",
+    auto_save_enabled = true,
+    auto_restore_enabled = false,        -- crue drives restore explicitly
+    auto_session_create_enabled = false,
+    auto_session_enable_last_session = false,
+  },
+},
+```
+
+Session files are UUID-named under `~/.local/share/nvim/crue-sessions/`. `crue-clean` removes the matching file when it prunes a session. Legacy crue sessions (created before you added this) fall back gracefully — first resume starts fresh, subsequent resumes restore.
 
 ### Hardcoded paths
 
@@ -105,6 +134,8 @@ Safe by default:
 | `crue_words.py` | Adjective + noun lists for auto-generated branch names |
 | `crue_clean.sh` | Cleanup entry point: picker → worktree remove → branch delete → tmux kill |
 | `crue_clean_picker.py` | Curses TUI for session selection + confirmation |
+| `install.sh` | Idempotent installer: notification sounds + Claude Code Stop/Notification hooks (WSL-only) |
+| `assets/sounds/` | Bundled WAVs used by the Claude Code hooks |
 
 ## Caveats
 

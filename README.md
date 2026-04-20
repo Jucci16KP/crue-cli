@@ -52,7 +52,7 @@ alias crue-clean="~/source/repos/crue-cli/crue_clean.sh"
 
 ## Neovim session integration (optional)
 
-`crue.sh` exports `CRUE_SESSION_UUID` and launches nvim with `+SessionSave <uuid>` (new) or `+SessionRestore <uuid>` (resume). To have nvim actually persist and restore your buffers/windows between crue sessions, add [auto-session](https://github.com/rmagatti/auto-session) to your config, gated on that env var so it only activates inside crue.
+`crue.sh` exports `CRUE_SESSION_UUID` and launches nvim with `+AutoSession save <uuid>` (new) or `+AutoSession restore <uuid>` (resume). To have nvim actually persist and restore your buffers/windows between crue sessions, add [auto-session](https://github.com/rmagatti/auto-session) to your config.
 
 lazy.nvim snippet:
 
@@ -60,16 +60,28 @@ lazy.nvim snippet:
 {
   "rmagatti/auto-session",
   lazy = false,
-  cond = function()
-    return vim.env.CRUE_SESSION_UUID ~= nil
-  end,
   opts = {
-    auto_session_root_dir = vim.fn.expand "~/.local/share/nvim/crue-sessions/",
-    auto_save_enabled = true,
-    auto_restore_enabled = false,        -- crue drives restore explicitly
-    auto_session_create_enabled = false,
-    auto_session_enable_last_session = false,
+    root_dir = vim.fn.expand "~/.local/share/nvim/crue-sessions/",
+    auto_save = true,
+    auto_restore = false,   -- crue drives restore explicitly
+    auto_create = false,
   },
+  config = function(_, opts)
+    require("auto-session").setup(opts)
+    -- VimLeave doesn't fire on deadly signals (SIGHUP from `tmux kill-session`),
+    -- so save-on-exit is unreliable. Save incrementally on buffer changes.
+    -- Gated on v:vim_did_enter so startup BufAdd for the scratch buffer can't
+    -- overwrite the file before +AutoSession restore has run.
+    local uuid = vim.env.CRUE_SESSION_UUID
+    vim.api.nvim_create_autocmd({ "BufAdd", "BufDelete", "BufWritePost", "WinClosed" }, {
+      group = vim.api.nvim_create_augroup("CrueSessionSave", { clear = true }),
+      callback = function()
+        if vim.v.vim_did_enter == 1 then
+          pcall(require("auto-session").save_session, uuid)
+        end
+      end,
+    })
+  end,
 },
 ```
 

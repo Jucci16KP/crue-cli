@@ -71,11 +71,21 @@ build_session() {
     fi
   fi
 
+  # Export CRUE_SESSION_UUID so every pane in this tmux session (including the
+  # first Neovim shell) inherits it. Also keep an inline assignment in the
+  # send-keys command as a belt-and-suspenders fallback.
+  if [[ -n "$nvim_uuid" ]]; then
+    export CRUE_SESSION_UUID="$nvim_uuid"
+  fi
+
   tmux new-session -d -s "$session" -n "Neovim" -c "$workdir"
+  if [[ -n "$nvim_uuid" ]]; then
+    tmux set-environment -t "$session" CRUE_SESSION_UUID "$nvim_uuid"
+  fi
   if [[ -n "$nvim_uuid" && "$nvim_mode" == "restore" ]]; then
-    tmux send-keys -t "$session:Neovim" "CRUE_SESSION_UUID=$nvim_uuid nvim '+SessionRestore $nvim_uuid'" C-m
+    tmux send-keys -t "$session:Neovim" "CRUE_SESSION_UUID=$nvim_uuid nvim '+AutoSession restore $nvim_uuid'" C-m
   elif [[ -n "$nvim_uuid" ]]; then
-    tmux send-keys -t "$session:Neovim" "CRUE_SESSION_UUID=$nvim_uuid nvim '+SessionSave $nvim_uuid' ." C-m
+    tmux send-keys -t "$session:Neovim" "CRUE_SESSION_UUID=$nvim_uuid nvim '+AutoSession save $nvim_uuid' ." C-m
   else
     tmux send-keys -t "$session:Neovim" "nvim ." C-m
   fi

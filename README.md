@@ -121,14 +121,20 @@ If the tmux session died but the worktree folder is still on disk, picking it on
 $ crue-clean
 ```
 
-Lists all sessions with age, worktree count, dirty count, and tmux alive/dead. `Space` toggles, `a` toggles all, `Enter` → confirmation → `y` to proceed.
+Lists all sessions with age, worktree count, dirty count, and tmux alive/dead. `Space` toggles, `a` toggles all, `Enter` → confirmation → `y` to proceed safely, or `F` to force.
 
-Safe by default:
+Safe by default (`y`):
 
 - Worktrees with uncommitted changes or branches not reachable from `origin/*` are **skipped**.
 - Branches only get deleted if fully merged/pushed (`git branch -d`, never `-D`).
 - The session folder is removed only if no live worktrees remain inside.
 - The tmux session is killed last. If you clean the session you're currently attached to, the client is switched to another session (or detached) first.
+
+Force mode (`F`) — destructive, use when you want a dirty session gone:
+
+- Dirty / unpushed worktrees are removed via `git worktree remove --force` (uncommitted changes are discarded).
+- Branches are deleted with `git branch -D`, even if they were never merged or pushed.
+- Everything else (workspace folder cleanup, nvim session file, tmux kill) behaves the same.
 
 ## How it works
 

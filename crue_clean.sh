@@ -27,10 +27,21 @@ if [[ $rc -ne 0 ]]; then
   exit 1
 fi
 
-mapfile -t selected < "$picker_out"
+mapfile -t lines < "$picker_out"
+if [[ ${#lines[@]} -lt 2 ]]; then
+  echo "crue-clean: nothing selected" >&2
+  exit 1
+fi
+mode="${lines[0]}"
+selected=("${lines[@]:1}")
 if [[ ${#selected[@]} -eq 0 ]]; then
   echo "crue-clean: nothing selected" >&2
   exit 1
+fi
+force=0
+if [[ "$mode" == "force" ]]; then
+  force=1
+  echo "crue-clean: FORCE mode — dirty worktrees and unmerged branches will be removed"
 fi
 
 # --- 2. If cleaning the current session, move it to the end of the list -----
@@ -90,14 +101,15 @@ for s in "${selected[@]}"; do
     [[ -e "$wt/.git" ]] || continue
     repo=$(basename "$wt")
 
-    # Dirty check
-    dirty=0
-    if [[ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]]; then
-      dirty=1
-    fi
-    if [[ $dirty -eq 0 ]]; then
-      branch=$(git -C "$wt" branch --show-current 2>/dev/null || true)
-      if [[ -n "$branch" ]]; then
+    branch=$(git -C "$wt" branch --show-current 2>/dev/null || true)
+
+    # Dirty check (skipped entirely when forcing)
+    if [[ $force -eq 0 ]]; then
+      dirty=0
+      if [[ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]]; then
+        dirty=1
+      fi
+      if [[ $dirty -eq 0 && -n "$branch" ]]; then
         on_origin=0
         for upstream in "origin/$branch" "origin/HEAD"; do
           if git -C "$wt" merge-base --is-ancestor "$branch" "$upstream" 2>/dev/null; then
@@ -108,27 +120,41 @@ for s in "${selected[@]}"; do
           dirty=1
         fi
       fi
+      if [[ $dirty -eq 1 ]]; then
+        echo "  [$repo] SKIP (dirty or unpushed) — worktree kept at $wt"
+        continue
+      fi
     fi
 
-    if [[ $dirty -eq 1 ]]; then
-      echo "  [$repo] SKIP (dirty or unpushed) — worktree kept at $wt"
-      continue
-    fi
-
-    branch=$(git -C "$wt" branch --show-current 2>/dev/null || true)
-
-    if git -C "$REPOS_DIR/$repo" worktree remove "$wt" 2>/dev/null; then
-      echo "  [$repo] removed worktree"
+    if [[ $force -eq 1 ]]; then
+      if git -C "$REPOS_DIR/$repo" worktree remove --force "$wt" 2>/dev/null; then
+        echo "  [$repo] force-removed worktree"
+      else
+        echo "  [$repo] FAILED worktree remove --force — skipping branch delete"
+        continue
+      fi
     else
-      echo "  [$repo] FAILED worktree remove — skipping branch delete"
-      continue
+      if git -C "$REPOS_DIR/$repo" worktree remove "$wt" 2>/dev/null; then
+        echo "  [$repo] removed worktree"
+      else
+        echo "  [$repo] FAILED worktree remove — skipping branch delete"
+        continue
+      fi
     fi
 
     if [[ -n "$branch" ]]; then
-      if git -C "$REPOS_DIR/$repo" branch -d "$branch" >/dev/null 2>&1; then
-        echo "  [$repo] deleted branch $branch"
+      if [[ $force -eq 1 ]]; then
+        if git -C "$REPOS_DIR/$repo" branch -D "$branch" >/dev/null 2>&1; then
+          echo "  [$repo] force-deleted branch $branch"
+        else
+          echo "  [$repo] FAILED to delete branch $branch"
+        fi
       else
-        echo "  [$repo] kept branch $branch (not fully merged/pushed)"
+        if git -C "$REPOS_DIR/$repo" branch -d "$branch" >/dev/null 2>&1; then
+          echo "  [$repo] deleted branch $branch"
+        else
+          echo "  [$repo] kept branch $branch (not fully merged/pushed)"
+        fi
       fi
     fi
   done

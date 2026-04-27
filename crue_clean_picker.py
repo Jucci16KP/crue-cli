@@ -171,20 +171,20 @@ def draw_list(stdscr, sessions, cursor):
 def draw_confirm(stdscr, sessions):
     stdscr.clear()
     _safe_addstr(stdscr, 0, 0,
-                 "Confirm cleanup?  y=proceed   any other key=back",
+                 "Confirm cleanup?  y=safe   F=FORCE   any other key=back",
                  curses.A_BOLD)
     _safe_addstr(stdscr, 1, 0,
-                 "Dirty/unpushed worktrees are skipped. Branches kept if not merged/pushed.",
+                 "y: skip dirty, only delete merged branches  |  "
+                 "F: remove dirty too + force-delete branches",
                  curses.A_DIM)
 
     row = 3
     for s in sessions:
         if not s.selected:
             continue
-        safe = s.worktree_count - s.dirty_count
         tmux = "kill tmux" if s.tmux_alive else "tmux already dead"
-        detail = (f"  {s.name}: remove {safe} clean worktrees, "
-                  f"skip {s.dirty_count} dirty, {tmux}")
+        detail = (f"  {s.name}: {s.worktree_count} worktrees "
+                  f"({s.dirty_count} dirty), {tmux}")
         _safe_addstr(stdscr, row, 0, detail)
         row += 1
     stdscr.refresh()
@@ -216,8 +216,11 @@ def run(stdscr, sessions):
                 continue
             draw_confirm(stdscr, sessions)
             ch2 = stdscr.getch()
+            names = [s.name for s in sessions if s.selected]
             if ch2 in (ord("y"), ord("Y")):
-                return [s.name for s in sessions if s.selected]
+                return ("clean", names)
+            if ch2 == ord("F"):
+                return ("force", names)
         elif ch in (27, ord("q")):
             return None
 
@@ -239,8 +242,10 @@ def main():
     result = curses.wrapper(run, sessions)
     if result is None:
         sys.exit(1)
+    mode, names = result
     with output_path.open("w") as f:
-        for name in result:
+        f.write(mode + "\n")
+        for name in names:
             f.write(name + "\n")
 
 

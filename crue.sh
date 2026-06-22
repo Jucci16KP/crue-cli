@@ -100,6 +100,36 @@ build_session() {
   tmux select-window -t "$session:1"
 }
 
+# --- touch_session_meta: record now() as last_opened in .crue-meta.json -----
+# Atomic read-modify-write so any other metadata keys are preserved.
+touch_session_meta() {
+  local workdir="$1"
+  CRUE_META_WORKDIR="$workdir" python3 - <<'PY'
+import json, os, tempfile, datetime
+workdir = os.environ["CRUE_META_WORKDIR"]
+path = os.path.join(workdir, ".crue-meta.json")
+try:
+    with open(path) as f:
+        data = json.load(f)
+        if not isinstance(data, dict):
+            data = {}
+except (FileNotFoundError, ValueError):
+    data = {}
+data["last_opened"] = datetime.datetime.now().isoformat(timespec="seconds")
+fd, tmp = tempfile.mkstemp(dir=workdir, prefix=".crue-meta.json.")
+try:
+    with os.fdopen(fd, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, path)
+except Exception:
+    try:
+        os.unlink(tmp)
+    except FileNotFoundError:
+        pass
+    raise
+PY
+}
+
 # ============================================================================
 # RESUME PATH
 # ============================================================================
@@ -122,6 +152,7 @@ print(json.loads(first).get("dir_name", ""))
   # Already running: just reconnect.
   if tmux has-session -t "$session" 2>/dev/null; then
     echo "crue: attaching to existing session '$session'"
+    touch_session_meta "$workdir"
     attach_or_switch "$session"
     exit 0
   fi
@@ -141,6 +172,7 @@ print(json.loads(first).get("dir_name", ""))
     claude_cmd="claude --continue"
   fi
 
+  touch_session_meta "$workdir"
   build_session "$session" "$workdir" "$claude_cmd" "$session_id" "restore"
   echo "crue: session '$session' ready at $workdir"
   attach_or_switch "$session"
@@ -323,6 +355,7 @@ else
   claude_cmd="claude --session-id $session_id --name $(printf %q "$dir_name")"
 fi
 
+touch_session_meta "$workdir"
 build_session "$session" "$workdir" "$claude_cmd" "$session_id" "save"
 
 echo "crue: session '$session' ready at $workdir"

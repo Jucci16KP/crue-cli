@@ -21,6 +21,7 @@ Exit codes:
   0 success, 1 user cancelled, 2 bad args / no repos found.
 """
 import curses
+import datetime
 import json
 import locale
 import subprocess
@@ -51,6 +52,43 @@ def find_workspaces(workspace_dir: Path) -> list[str]:
     )
 
 
+def session_last_opened(workspace_dir: Path, name: str):
+    """Datetime a session was last opened.
+
+    Reads `last_opened` from <session>/.crue-meta.json, falling back to the
+    session folder's mtime for legacy sessions that predate the metadata file.
+    """
+    d = workspace_dir / name
+    meta = d / ".crue-meta.json"
+    try:
+        ts = json.loads(meta.read_text()).get("last_opened")
+        if ts:
+            return datetime.datetime.fromisoformat(ts)
+    except (FileNotFoundError, ValueError, OSError):
+        pass
+    try:
+        return datetime.datetime.fromtimestamp(d.stat().st_mtime)
+    except OSError:
+        return None
+
+
+def _humanize(delta: datetime.timedelta) -> str:
+    s = int(delta.total_seconds())
+    if s < 60:
+        return "just now"
+    if s < 3600:
+        return f"{s // 60}m ago"
+    if s < 86400:
+        return f"{s // 3600}h ago"
+    return f"{s // 86400}d ago"
+
+
+def format_last_opened(dt, now) -> str:
+    if dt is None:
+        return ""
+    return f"{dt:%Y-%m-%d %H:%M} ({_humanize(now - dt)})"
+
+
 def running_tmux_sessions() -> set[str]:
     try:
         out = subprocess.run(
@@ -75,7 +113,7 @@ def _safe_addstr(stdscr, row, col, text, attr=0):
 
 
 # --- Screen 0: pick existing workspace or "new" -----------------------------
-def draw_screen0(stdscr, workspaces, running, cursor):
+def draw_screen0(stdscr, workspaces, running, meta_lines, cursor):
     stdscr.clear()
     h, _ = stdscr.getmaxyx()
     _safe_addstr(stdscr, 0, 0, "crue", curses.A_BOLD)
@@ -86,10 +124,12 @@ def draw_screen0(stdscr, workspaces, running, cursor):
     )
     # "+ new session" is always index 0; workspaces follow.
     items = [("new", None)] + [("workspace", w) for w in workspaces]
-    max_list = max(1, h - 4)
+    # Each item occupies two rows: a title line and a date line below it.
+    max_list = max(1, (h - 3) // 2)
     start = max(0, cursor - max_list + 1) if cursor >= max_list else 0
     for i, idx in enumerate(range(start, min(start + max_list, len(items)))):
-        row = 3 + i
+        title_row = 3 + i * 2
+        date_row = title_row + 1
         kind, payload = items[idx]
         if kind == "new":
             line = "[+] new session"
@@ -97,15 +137,18 @@ def draw_screen0(stdscr, workspaces, running, cursor):
             dot = "●" if payload in running else "○"
             line = f" {dot}  {payload}"
         attr = curses.A_REVERSE if idx == cursor else curses.A_NORMAL
-        _safe_addstr(stdscr, row, 0, line, attr)
+        _safe_addstr(stdscr, title_row, 0, line, attr)
+        if kind == "workspace":
+            _safe_addstr(stdscr, date_row, 4, meta_lines.get(payload, ""),
+                         curses.A_DIM)
     stdscr.refresh()
 
 
-def screen0(stdscr, workspaces, running):
+def screen0(stdscr, workspaces, running, meta_lines):
     items = [("new", None)] + [("workspace", w) for w in workspaces]
     cursor = 0
     while True:
-        draw_screen0(stdscr, workspaces, running, cursor)
+        draw_screen0(stdscr, workspaces, running, meta_lines, cursor)
         ch = stdscr.getch()
         if ch in (curses.KEY_UP, ord("k")):
             cursor = max(0, cursor - 1)
@@ -218,7 +261,7 @@ def screen2(stdscr):
         curses.curs_set(0)
 
 
-def run(stdscr, repos, workspaces, running):
+def run(stdscr, repos, workspaces, running, meta_lines):
     try:
         curses.set_escdelay(25)
     except AttributeError:
@@ -226,7 +269,7 @@ def run(stdscr, repos, workspaces, running):
     curses.curs_set(0)
     marks = [NONE] * len(repos)
     while True:
-        choice = screen0(stdscr, workspaces, running)
+        choice = screen0(stdscr, workspaces, running, meta_lines)
         if choice is None:
             return None
         kind, payload = choice
@@ -262,7 +305,14 @@ def main():
         sys.exit(2)
     workspaces = find_workspaces(workspace_dir)
     running = running_tmux_sessions()
-    result = curses.wrapper(run, repos, workspaces, running)
+    # Sort most-recently-opened first; format the date line for each session.
+    now = datetime.datetime.now()
+    opened = {w: session_last_opened(workspace_dir, w) for w in workspaces}
+    workspaces.sort(
+        key=lambda w: opened[w] or datetime.datetime.min, reverse=True
+    )
+    meta_lines = {w: format_last_opened(opened[w], now) for w in workspaces}
+    result = curses.wrapper(run, repos, workspaces, running, meta_lines)
     if result is None:
         sys.exit(1)
     mode, payload = result

@@ -113,16 +113,26 @@ def _safe_addstr(stdscr, row, col, text, attr=0):
 
 
 # --- Screen 0: pick existing workspace or "new" -----------------------------
-def draw_screen0(stdscr, workspaces, running, meta_lines, cursor):
+def draw_screen0(stdscr, workspaces, running, meta_lines, cursor,
+                 query="", searching=False):
     stdscr.clear()
     h, _ = stdscr.getmaxyx()
     _safe_addstr(stdscr, 0, 0, "crue", curses.A_BOLD)
     _safe_addstr(
         stdscr, 1, 0,
-        "j/k=nav  Enter=select  Esc/q=quit",
+        "j/k=nav  Enter=select  /=search  Esc/q=quit",
         curses.A_DIM,
     )
-    # "+ new session" is always index 0; workspaces follow.
+    # Search line: live query while typing, or the active filter afterwards.
+    if searching or query:
+        if searching:
+            label, attr = f"/{query}┃", curses.A_BOLD
+        else:
+            label, attr = f"filter: {query}  (Esc clears)", curses.A_DIM
+        if query and not workspaces:
+            label += "   (no matches)"
+        _safe_addstr(stdscr, 2, 0, label, attr)
+    # "+ new session" is always index 0; matching workspaces follow.
     items = [("new", None)] + [("workspace", w) for w in workspaces]
     # Each item occupies two rows: a title line and a date line below it.
     max_list = max(1, (h - 3) // 2)
@@ -145,18 +155,59 @@ def draw_screen0(stdscr, workspaces, running, meta_lines, cursor):
 
 
 def screen0(stdscr, workspaces, running, meta_lines):
-    items = [("new", None)] + [("workspace", w) for w in workspaces]
+    query = ""
+    searching = False
     cursor = 0
+    last_query = None
     while True:
-        draw_screen0(stdscr, workspaces, running, meta_lines, cursor)
+        # Filter workspaces by case-insensitive substring on the query.
+        if query:
+            q = query.lower()
+            filtered = [w for w in workspaces if q in w.lower()]
+        else:
+            filtered = list(workspaces)
+        items = [("new", None)] + [("workspace", w) for w in filtered]
+        # When the query text changes, jump the cursor to the first matching
+        # session (index 1) so Enter picks a result, not "new session".
+        if query != last_query:
+            cursor = 1 if (query and filtered) else 0
+            last_query = query
+        cursor = max(0, min(cursor, len(items) - 1))
+        draw_screen0(stdscr, filtered, running, meta_lines, cursor,
+                     query, searching)
         ch = stdscr.getch()
-        if ch in (curses.KEY_UP, ord("k")):
+        if searching:
+            # Type-to-filter mode: printable chars edit the query; arrows still
+            # move the cursor; Enter selects; Esc leaves search (keeps filter).
+            if ch in (curses.KEY_ENTER, 10, 13):
+                return items[cursor]
+            elif ch == 27:
+                searching = False
+            elif ch in (curses.KEY_BACKSPACE, 127, 8):
+                query = query[:-1]
+            elif ch == curses.KEY_UP:
+                cursor = max(0, cursor - 1)
+            elif ch == curses.KEY_DOWN:
+                cursor = min(len(items) - 1, cursor + 1)
+            elif 32 <= ch < 127:
+                query += chr(ch)
+            continue
+        if ch == ord("/"):
+            searching = True
+        elif ch in (curses.KEY_UP, ord("k")):
             cursor = max(0, cursor - 1)
         elif ch in (curses.KEY_DOWN, ord("j")):
             cursor = min(len(items) - 1, cursor + 1)
         elif ch in (curses.KEY_ENTER, 10, 13):
             return items[cursor]
-        elif ch in (27, ord("q")):
+        elif ch == 27:
+            # Esc clears an active filter first, then quits.
+            if query:
+                query = ""
+                cursor = 0
+            else:
+                return None
+        elif ch == ord("q"):
             return None
 
 

@@ -258,6 +258,12 @@ printf '%s\n' "${all_repos[@]}" | xargs -P 8 -I {} bash -c '
     echo "[$repo] SKIP: no origin/HEAD or origin/{main,master}" >&2
     exit 0
   fi
+  # Worktrees are based on origin/<default>; without a fetch that ref is only as
+  # fresh as the last manual fetch, so new sessions can start hundreds of commits
+  # behind. Fetch just the default branch; warn-and-continue so offline still works.
+  if ! git -C "$CRUE_REPOS_DIR/$repo" fetch origin "$default" --quiet 2>/dev/null; then
+    echo "[$repo] WARN: fetch failed, using last-known origin/$default" >&2
+  fi
   if git -C "$CRUE_REPOS_DIR/$repo" worktree add -b "$CRUE_BRANCH" \
        "$CRUE_WORKDIR/$repo" "origin/$default" >/dev/null 2>&1; then
     echo "[$repo] + on $default"

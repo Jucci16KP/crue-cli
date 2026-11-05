@@ -72,45 +72,43 @@ mux_current_session() {
 }
 
 # mux_build_session <name> <workdir> <nvim_cmd> <claude_cmd> [KEY=VALUE...]
-# Creates the session with Neovim / Term / Claude / CLI, each starting in
-# <workdir>, with the KEY=VALUE pairs in every shell's environment.
+# Creates the session with Claude / Neovim / Term / CLI (in that order, with
+# Claude focused), each starting in <workdir>, with the KEY=VALUE pairs in
+# every shell's environment.
 mux_build_session() {
   local session="$1" workdir="$2" nvim_cmd="$3" claude_cmd="$4"
   shift 4
   local kv
 
   if [[ "$CRUE_MUX_BACKEND" == herdr ]]; then
-    local env_args=() out ws nvim_tab nvim_pane claude_pane
+    local env_args=() out ws claude_tab claude_pane nvim_pane
     for kv in "$@"; do env_args+=(--env "$kv"); done
 
     out=$(herdr workspace create --cwd "$workdir" --label "$session" "${env_args[@]}" --no-focus)
     ws=$(_json_get result.workspace.workspace_id <<<"$out")
-    nvim_tab=$(_json_get result.tab.tab_id <<<"$out")
+    claude_tab=$(_json_get result.tab.tab_id <<<"$out")
+    claude_pane=$(_json_get result.root_pane.pane_id <<<"$out")
+    herdr tab rename "$claude_tab" Claude >/dev/null
+    herdr pane run "$claude_pane" "$claude_cmd" >/dev/null
+
+    out=$(herdr tab create --workspace "$ws" --cwd "$workdir" --label Neovim "${env_args[@]}" --no-focus)
     nvim_pane=$(_json_get result.root_pane.pane_id <<<"$out")
-    herdr tab rename "$nvim_tab" Neovim >/dev/null
     herdr pane run "$nvim_pane" "$nvim_cmd" >/dev/null
 
     herdr tab create --workspace "$ws" --cwd "$workdir" --label Term "${env_args[@]}" --no-focus >/dev/null
-
-    out=$(herdr tab create --workspace "$ws" --cwd "$workdir" --label Claude "${env_args[@]}" --no-focus)
-    claude_pane=$(_json_get result.root_pane.pane_id <<<"$out")
-    herdr pane run "$claude_pane" "$claude_cmd" >/dev/null
-
     herdr tab create --workspace "$ws" --cwd "$workdir" --label CLI "${env_args[@]}" --no-focus >/dev/null
-    herdr tab focus "$nvim_tab" >/dev/null
+    herdr tab focus "$claude_tab" >/dev/null
   else
-    tmux new-session -d -s "$session" -n "Neovim" -c "$workdir"
-    for kv in "$@"; do
-      tmux set-environment -t "$session" "${kv%%=*}" "${kv#*=}"
-    done
-    # The first window's shell started before set-environment, so nvim_cmd
-    # carries its own inline assignments.
-    tmux send-keys -t "$session:Neovim" "$nvim_cmd" C-m
-    tmux new-window -t "$session" -n "Term" -c "$workdir"
-    tmux new-window -t "$session" -n "Claude" -c "$workdir"
+    # -e puts the variables in each window's shell from the start (tmux 3.0+).
+    local env_args=()
+    for kv in "$@"; do env_args+=(-e "$kv"); done
+    tmux new-session -d -s "$session" -n "Claude" -c "$workdir" "${env_args[@]}"
     tmux send-keys -t "$session:Claude" "$claude_cmd" C-m
-    tmux new-window -t "$session" -n "CLI" -c "$workdir"
-    tmux select-window -t "$session:1"
+    tmux new-window -t "$session" -n "Neovim" -c "$workdir" "${env_args[@]}"
+    tmux send-keys -t "$session:Neovim" "$nvim_cmd" C-m
+    tmux new-window -t "$session" -n "Term" -c "$workdir" "${env_args[@]}"
+    tmux new-window -t "$session" -n "CLI" -c "$workdir" "${env_args[@]}"
+    tmux select-window -t "$session:Claude"
   fi
 }
 

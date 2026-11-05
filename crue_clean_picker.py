@@ -17,14 +17,17 @@ Exit codes:
 """
 import curses
 import locale
-import os
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import crue_mux
+
 locale.setlocale(locale.LC_ALL, "")
+
+MUX = crue_mux.backend()
 
 
 @dataclass
@@ -34,7 +37,7 @@ class Session:
     age_seconds: float
     worktree_count: int
     dirty_count: int
-    tmux_alive: bool
+    session_alive: bool
     is_current: bool
     selected: bool = False
 
@@ -57,18 +60,6 @@ def _run(cmd, timeout=5):
         return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except Exception:
         return None
-
-
-def tmux_current_session():
-    if not os.environ.get("TMUX"):
-        return None
-    r = _run(["tmux", "display-message", "-p", "#S"], timeout=2)
-    return r.stdout.strip() if r and r.returncode == 0 else None
-
-
-def tmux_has_session(name: str) -> bool:
-    r = _run(["tmux", "has-session", "-t", name], timeout=2)
-    return bool(r and r.returncode == 0)
 
 
 def worktree_is_dirty(wt: Path) -> bool:
@@ -97,7 +88,8 @@ def worktree_is_dirty(wt: Path) -> bool:
 def discover(workspace_dir: Path) -> list[Session]:
     if not workspace_dir.is_dir():
         return []
-    current = tmux_current_session()
+    current = crue_mux.current_session()
+    live = crue_mux.list_sessions()
     now = time.time()
     entries = sorted(p for p in workspace_dir.iterdir() if p.is_dir())
     if not entries:
@@ -122,7 +114,7 @@ def discover(workspace_dir: Path) -> list[Session]:
             age_seconds=age,
             worktree_count=len(worktrees),
             dirty_count=dirty,
-            tmux_alive=tmux_has_session(entry.name),
+            session_alive=entry.name in live,
             is_current=(entry.name == current),
         ))
     return sessions
@@ -153,11 +145,11 @@ def draw_list(stdscr, sessions, cursor):
         row = 3 + i
         mark = "[x]" if s.selected else "[ ]"
         age = humanize_age(s.age_seconds)
-        tmux = "alive" if s.tmux_alive else "dead "
+        alive = "alive" if s.session_alive else "dead "
         cur = "  <current>" if s.is_current else ""
         line = (f"{mark} {s.name:<32} {age:>8}  "
                 f"{s.worktree_count:>2} wt  {s.dirty_count} dirty  "
-                f"tmux:{tmux}{cur}")
+                f"{MUX}:{alive}{cur}")
         attr = curses.A_REVERSE if idx == cursor else 0
         _safe_addstr(stdscr, row, 0, line, attr)
 
@@ -182,9 +174,9 @@ def draw_confirm(stdscr, sessions):
     for s in sessions:
         if not s.selected:
             continue
-        tmux = "kill tmux" if s.tmux_alive else "tmux already dead"
+        mux = f"close {MUX} session" if s.session_alive else f"{MUX} session already gone"
         detail = (f"  {s.name}: {s.worktree_count} worktrees "
-                  f"({s.dirty_count} dirty), {tmux}")
+                  f"({s.dirty_count} dirty), {mux}")
         _safe_addstr(stdscr, row, 0, detail)
         row += 1
     stdscr.refresh()

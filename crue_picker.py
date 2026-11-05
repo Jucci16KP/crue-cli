@@ -2,7 +2,8 @@
 """Three-screen TUI for `crue`.
 
 Screen 0: pick an existing crue workspace or start a new one.
-Screen 1: flag repos as primary/secondary (briefing metadata only).
+Screen 1: flag repos as primary/secondary. Flagged repos get worktrees
+          (none flagged = every repo) and shape Claude's briefing.
 Screen 2: enter a worktree name (empty -> bash will auto-generate).
 
 Usage: crue_picker.py <repos-dir> <workspace-dir> <output-file>
@@ -24,9 +25,10 @@ import curses
 import datetime
 import json
 import locale
-import subprocess
 import sys
 from pathlib import Path
+
+import crue_mux
 
 locale.setlocale(locale.LC_ALL, "")
 
@@ -87,19 +89,6 @@ def format_last_opened(dt, now) -> str:
     if dt is None:
         return ""
     return f"{dt:%Y-%m-%d %H:%M} ({_humanize(now - dt)})"
-
-
-def running_tmux_sessions() -> set[str]:
-    try:
-        out = subprocess.run(
-            ["tmux", "list-sessions", "-F", "#{session_name}"],
-            capture_output=True, text=True, timeout=2,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return set()
-    if out.returncode != 0:
-        return set()
-    return {line.strip() for line in out.stdout.splitlines() if line.strip()}
 
 
 def _safe_addstr(stdscr, row, col, text, attr=0):
@@ -223,7 +212,7 @@ def draw_screen1(stdscr, repos, marks, cursor):
     )
     _safe_addstr(
         stdscr, 2, 0,
-        "(every repo gets a worktree; flags only tell Claude what to focus on)",
+        "(only flagged repos get worktrees - none flagged = all; add more later with `crue add <repo>`)",
         curses.A_DIM,
     )
 
@@ -355,7 +344,7 @@ def main():
         print(f"no git repos found in {repos_dir}", file=sys.stderr)
         sys.exit(2)
     workspaces = find_workspaces(workspace_dir)
-    running = running_tmux_sessions()
+    running = crue_mux.list_sessions()
     # Sort most-recently-opened first; format the date line for each session.
     now = datetime.datetime.now()
     opened = {w: session_last_opened(workspace_dir, w) for w in workspaces}

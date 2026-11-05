@@ -2,6 +2,7 @@
 # install — idempotent setup for the WSL-only bits of crue:
 #   - copy bundled notification sounds into ~/sounds/
 #   - merge Stop + Notification hooks into ~/.claude/settings.json
+#     (silent inside herdr, which plays its own sounds)
 #
 # Re-runnable; skips work already done. Leaves unrelated settings untouched.
 set -euo pipefail
@@ -34,21 +35,37 @@ SETTINGS="$HOME/.claude/settings.json"
 mkdir -p "$(dirname "$SETTINGS")"
 [[ -f "$SETTINGS" ]] || echo "{}" > "$SETTINGS"
 
-stop_cmd='powershell.exe -NoProfile -Command "(New-Object Media.SoundPlayer '"'"'$(wslpath -w ~/sounds/mixkit-correct-answer-tone-2870.wav)'"'"').PlaySync()"'
-notif_cmd='powershell.exe -NoProfile -Command "(New-Object Media.SoundPlayer '"'"'$(wslpath -w ~/sounds/mixkit-bell-notification-933.wav)'"'"').PlaySync()"'
+play() {
+  echo 'powershell.exe -NoProfile -Command "(New-Object Media.SoundPlayer '"'"'$(wslpath -w ~/sounds/'"$1"')'"'"').PlaySync()"'
+}
+# Inside herdr (HERDR_ENV=1) the hooks stay quiet and herdr's own sounds play.
+herdr_guard='[ "${HERDR_ENV:-}" = 1 ] || '
+stop_cmd="$herdr_guard$(play mixkit-correct-answer-tone-2870.wav)"
+notif_cmd="$herdr_guard$(play mixkit-bell-notification-933.wav)"
+# Commands written by earlier versions of this script; replaced, not duplicated.
+old_stop_cmd="$(play mixkit-correct-answer-tone-2870.wav)"
+old_notif_cmd="$(play mixkit-bell-notification-933.wav)"
 
 tmp=$(mktemp)
 jq \
   --arg stop_cmd "$stop_cmd" \
   --arg notif_cmd "$notif_cmd" \
+  --arg old_stop_cmd "$old_stop_cmd" \
+  --arg old_notif_cmd "$old_notif_cmd" \
   '
+  def drop_hook(event; cmd):
+    if .hooks[event] then
+      .hooks[event] |= (map(.hooks |= map(select(.command != cmd)))
+                        | map(select((.hooks | length) > 0)))
+    else . end;
   def ensure_hook(event; cmd):
     .hooks //= {} |
     .hooks[event] //= [] |
     if ([.hooks[event][]?.hooks[]?.command] | any(. == cmd)) then .
     else .hooks[event] += [{"hooks":[{"type":"command","async":true,"command":cmd}]}]
     end;
-  ensure_hook("Stop"; $stop_cmd) | ensure_hook("Notification"; $notif_cmd)
+  drop_hook("Stop"; $old_stop_cmd) | drop_hook("Notification"; $old_notif_cmd)
+  | ensure_hook("Stop"; $stop_cmd) | ensure_hook("Notification"; $notif_cmd)
   ' "$SETTINGS" > "$tmp"
 
 if cmp -s "$tmp" "$SETTINGS"; then

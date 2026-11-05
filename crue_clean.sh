@@ -2,13 +2,16 @@
 # crue-clean — remove one or more crue sessions.
 set -euo pipefail
 
-# If we end up killing the tmux session hosting this pane, tmux will SIGHUP
-# every process in that session. Keep going.
+# If we end up killing the tmux session / herdr workspace hosting this pane,
+# every process in it gets SIGHUP. Keep going.
 trap '' HUP
 
-SCRIPTS_DIR="/home/jucci-linux/source/repos/crue-cli"
-REPOS_DIR="/home/jucci-linux/source/repos"
-WORKTREES_DIR="$REPOS_DIR/.worktrees"
+SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPOS_DIR="${CRUE_REPOS_DIR:-$HOME/source/repos}"
+WORKTREES_DIR="${CRUE_WORKTREES_DIR:-$REPOS_DIR/.worktrees}"
+
+# shellcheck source=crue_mux.sh
+source "$SCRIPTS_DIR/crue_mux.sh"
 
 # --- 1. Run the picker ------------------------------------------------------
 picker_out=$(mktemp)
@@ -45,10 +48,7 @@ if [[ "$mode" == "force" ]]; then
 fi
 
 # --- 2. If cleaning the current session, move it to the end of the list -----
-current_session=""
-if [[ -n "${TMUX:-}" ]]; then
-  current_session=$(tmux display-message -p '#S' 2>/dev/null || true)
-fi
+current_session=$(mux_current_session)
 
 if [[ -n "$current_session" ]]; then
   head_sessions=()
@@ -66,14 +66,7 @@ fi
 # --- 3. If the current session is in the list, move the client elsewhere ----
 for s in "${selected[@]}"; do
   if [[ "$s" == "$current_session" ]]; then
-    other=$(tmux list-sessions -F '#S' 2>/dev/null | grep -vx "$current_session" | head -n1 || true)
-    if [[ -n "$other" ]]; then
-      echo "crue-clean: switching client to '$other' before cleaning '$current_session'"
-      tmux switch-client -t "$other" || true
-    else
-      echo "crue-clean: no other tmux session; detaching client before cleaning '$current_session'"
-      tmux detach-client || true
-    fi
+    mux_leave_session "$current_session"
     break
   fi
 done
@@ -85,7 +78,7 @@ for s in "${selected[@]}"; do
 
   if [[ ! -d "$workspace" ]]; then
     echo "  (no workspace dir — session already partially cleaned?)"
-    tmux kill-session -t "$s" 2>/dev/null && echo "  killed tmux session" || true
+    mux_kill_session "$s" && echo "  closed $CRUE_MUX_BACKEND session" || true
     continue
   fi
 
@@ -184,9 +177,9 @@ for s in "${selected[@]}"; do
     fi
   fi
 
-  # Kill the tmux session last (may SIGHUP us if this is the current session)
-  if tmux has-session -t "$s" 2>/dev/null; then
-    tmux kill-session -t "$s" && echo "  killed tmux session"
+  # Close the session last (may SIGHUP us if this is the current session)
+  if mux_has_session "$s"; then
+    mux_kill_session "$s" && echo "  closed $CRUE_MUX_BACKEND session"
   fi
 done
 

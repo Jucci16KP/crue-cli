@@ -21,11 +21,11 @@ For a new session named `ju/foo`:
     settings.local.json  (read access across ~/source, trust pre-accepted)
 ```
 
-And a session `ju-foo` with four tabs (herdr) or windows (tmux):
+And a session `ju-foo` with four tabs (herdr) or windows (tmux), opening on Claude:
 
+- **Claude** — `claude --session-id <uuid> --name ju-foo [briefing]`
 - **Neovim** — `nvim .` in the session folder
 - **Term** — shell in the session folder
-- **Claude** — `claude --session-id <uuid> --name ju-foo [briefing]`
 - **CLI** — blank shell
 
 Every shell in the session has `CRUE_WORKDIR` (the session folder) and `CRUE_SESSION_UUID` in its environment.
